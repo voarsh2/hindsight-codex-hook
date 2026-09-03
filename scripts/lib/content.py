@@ -49,20 +49,51 @@ def strip_memory_tags(content: str) -> str:
 def is_synthetic_codex_user_message(content: str) -> bool:
     """Return True for setup messages Codex persists as user chat.
 
-    Codex records AGENTS.md startup instructions as a normal user message in
-    rollout JSONL. Retaining those messages teaches Hindsight about hook and
-    agent rules instead of the user's work, and can create very large retain
-    payloads in long-running sessions.
+    Codex records bootstrap material as normal user messages in rollout JSONL.
+    Depending on the surface/version, the AGENTS.md block may be preceded by
+    a ``recommended_plugins`` block, and environment context may be emitted
+    as its own user message. Retaining those messages teaches Hindsight about
+    hook and agent rules instead of the user's work, and can create very large
+    retain payloads in long-running sessions.
     """
     if not isinstance(content, str):
         return False
 
-    stripped = content.lstrip()
-    return (
-        stripped.startswith("# AGENTS.md instructions for ")
+    stripped = content.strip()
+    if not stripped:
+        return False
+
+    has_agents_block = bool(
+        re.search(r"(?m)^# AGENTS\.md instructions for [^\r\n]+", stripped)
         and "<INSTRUCTIONS>" in stripped
         and "</INSTRUCTIONS>" in stripped
     )
+    has_plugins_block = (
+        stripped.startswith("<recommended_plugins>")
+        and "</recommended_plugins>" in stripped
+    )
+
+    # A complete AGENTS bootstrap may be wrapped in the plugin inventory.
+    if has_agents_block and (
+        stripped.startswith("# AGENTS.md instructions for ") or has_plugins_block
+    ):
+        return True
+
+    # Codex can persist these structural blocks without an AGENTS message.
+    # Require the block to occupy the whole message so user discussion that
+    # quotes one of these tags is retained normally.
+    if (
+        stripped.startswith("<environment_context>")
+        and stripped.endswith("</environment_context>")
+    ):
+        return True
+    if (
+        stripped.startswith("<recommended_plugins>")
+        and stripped.endswith("</recommended_plugins>")
+    ):
+        return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------

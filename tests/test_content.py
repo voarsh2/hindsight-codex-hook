@@ -57,8 +57,32 @@ class TestSyntheticCodexUserMessage:
         raw = "# AGENTS.md instructions for /home/coder/project\n\n<INSTRUCTIONS>\nremember things\n</INSTRUCTIONS>"
         assert is_synthetic_codex_user_message(raw)
 
+    def test_detects_wrapped_agents_startup_instructions(self):
+        raw = (
+            "<recommended_plugins>\n"
+            "Here is a list of plugins.\n"
+            "</recommended_plugins>\n"
+            "# AGENTS.md instructions for /home/coder/project\n\n"
+            "<INSTRUCTIONS>\nremember things\n</INSTRUCTIONS>\n"
+            "<environment_context>\n<cwd>/home/coder/project</cwd>\n"
+            "</environment_context>"
+        )
+        assert is_synthetic_codex_user_message(raw)
+
+    def test_detects_standalone_environment_context(self):
+        raw = "<environment_context>\n<cwd>/home/coder/project</cwd>\n</environment_context>"
+        assert is_synthetic_codex_user_message(raw)
+
+    def test_detects_standalone_recommended_plugins(self):
+        raw = "<recommended_plugins>\n- GitHub\n</recommended_plugins>"
+        assert is_synthetic_codex_user_message(raw)
+
     def test_does_not_match_normal_agents_discussion(self):
         raw = "We should update AGENTS.md instructions for this repo."
+        assert not is_synthetic_codex_user_message(raw)
+
+    def test_does_not_match_user_text_following_environment_context(self):
+        raw = "<environment_context>\n<cwd>/tmp</cwd>\n</environment_context>\nPlease retain this question."
         assert not is_synthetic_codex_user_message(raw)
 
 
@@ -199,6 +223,48 @@ class TestReadTranscriptCodexFormat:
         msgs = read_transcript(path)
         assert len(msgs) == 1
         assert msgs[0]["content"] == "actual user request"
+
+    def test_skips_codex_bootstrap_variants(self, tmp_path):
+        wrapped_bootstrap = (
+            "<recommended_plugins>\n- GitHub\n</recommended_plugins>\n"
+            "# AGENTS.md instructions for /home/coder/project\n\n"
+            "<INSTRUCTIONS>\nsetup rules\n</INSTRUCTIONS>\n"
+            "<environment_context>\n<cwd>/home/coder/project</cwd>\n"
+            "</environment_context>"
+        )
+        environment_only = (
+            "<environment_context>\n<cwd>/home/coder/project</cwd>\n"
+            "</environment_context>"
+        )
+        entries = [
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": wrapped_bootstrap}],
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": environment_only}],
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "actual user request"}],
+                },
+            },
+        ]
+        path = _write_jsonl(tmp_path, entries)
+        msgs = read_transcript(path)
+        assert msgs == [{"role": "user", "content": "actual user request"}]
 
     def test_skips_blank_lines_gracefully(self, tmp_path):
         f = tmp_path / "transcript.jsonl"
