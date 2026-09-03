@@ -24,6 +24,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 # Maximum length for tool output content in JSON format.
 _MAX_TOOL_OUTPUT_CHARS = 2000
@@ -72,6 +73,10 @@ def is_synthetic_codex_user_message(content: str) -> bool:
 def read_transcript(transcript_path: str, include_tool_calls: bool = False) -> list:
     """Read a Codex JSONL transcript and return list of message dicts.
 
+    Codex may split one logical session across multiple rollout JSONL files.
+    When the current file contains a ``history_base`` record, follow that
+    chain and read each predecessor only up to the recorded byte offset.
+
     When include_tool_calls is False (legacy mode), returns simple
     {role, content} dicts with text-only content.
 
@@ -103,55 +108,182 @@ def read_transcript(transcript_path: str, include_tool_calls: bool = False) -> l
     if not transcript_path or not os.path.isfile(transcript_path):
         return []
 
+    segments = resolve_transcript_segments(transcript_path)
+    if not segments:
+        return []
+
     if include_tool_calls:
-        return _read_transcript_rich(transcript_path)
-    return _read_transcript_text(transcript_path)
+        return _read_transcript_rich(segments)
+    return _read_transcript_text(segments)
 
 
-def _read_transcript_text(transcript_path: str) -> list:
+def _read_session_meta(path: str) -> dict:
+    """Read the first session metadata payload from a rollout file."""
+    try:
+        with open(path, "rb") as f:
+            raw_line = f.readline()
+        if not raw_line:
+            return {}
+        entry = json.loads(raw_line.decode("utf-8"))
+        if entry.get("type") != "session_meta":
+            return {}
+        payload = entry.get("payload", {})
+        return payload if isinstance(payload, dict) else {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+
+
+def _find_history_file(thread_id: str, current_path: str, session_id: str) -> str | None:
+    """Find the rollout file whose filename represents ``thread_id``.
+
+    Continuation filenames contain both the root session ID and the current
+    turn ID.  Matching the filename suffix prevents selecting a continuation
+    merely because it also contains the root session ID.
+    """
+    if not thread_id:
+        return None
+
+    sessions_root = Path(os.path.expanduser("~")) / ".codex" / "sessions"
+    if not sessions_root.is_dir():
+        return None
+
+    try:
+        candidates = list(sessions_root.rglob(f"*{thread_id}*.jsonl"))
+    except OSError:
+        return None
+
+    current_real = os.path.realpath(current_path)
+    suffixes = (f"-{thread_id}.jsonl", f"_{thread_id}.jsonl")
+    exact = [p for p in candidates if p.name.endswith(suffixes)]
+    if exact:
+        candidates = exact
+
+    for candidate in candidates:
+        candidate_path = str(candidate)
+        if os.path.realpath(candidate_path) == current_real:
+            continue
+        meta = _read_session_meta(candidate_path)
+        if session_id and meta.get("session_id") != session_id:
+            continue
+        return candidate_path
+    return None
+
+
+def resolve_transcript_segments(transcript_path: str) -> list[tuple[str, int | None]]:
+    """Resolve one logical Codex transcript into ordered file segments.
+
+    The returned list is oldest-first.  Each tuple is ``(path, end_offset)``;
+    ``None`` means read the whole file.  Codex's history byte offsets are
+    UTF-8 file offsets and identify the exact predecessor boundary.
+    """
+    current_path = os.path.abspath(transcript_path)
+    if not os.path.isfile(current_path):
+        return []
+
+    segments_reversed: list[tuple[str, int | None]] = [(current_path, None)]
+    visited: set[str] = set()
+    current_session_id = ""
+
+    while current_path:
+        current_real = os.path.realpath(current_path)
+        if current_real in visited:
+            break
+        visited.add(current_real)
+
+        meta = _read_session_meta(current_path)
+        if not current_session_id:
+            current_session_id = str(meta.get("session_id", ""))
+        history_base = meta.get("history_base")
+        if not isinstance(history_base, dict):
+            break
+
+        previous_thread_id = str(history_base.get("thread_id", ""))
+        previous_path = _find_history_file(
+            previous_thread_id, current_path, current_session_id
+        )
+        if not previous_path:
+            # Never replace a document with a partial tail when Codex tells
+            # us that older history exists but its predecessor is unavailable.
+            return []
+
+        raw_end_offset = history_base.get("end_byte_offset")
+        try:
+            end_offset = int(raw_end_offset) if raw_end_offset is not None else None
+        except (TypeError, ValueError):
+            end_offset = None
+
+        segments_reversed.append((previous_path, end_offset))
+        current_path = previous_path
+
+    return list(reversed(segments_reversed))
+
+
+def _iter_transcript_lines(source):
+    """Yield decoded JSONL lines from a path or resolved transcript segments."""
+    if isinstance(source, (str, os.PathLike)):
+        segments = [(os.fspath(source), None)]
+    else:
+        segments = source
+
+    for path, end_offset in segments:
+        try:
+            with open(path, "rb") as f:
+                while True:
+                    if end_offset is not None and f.tell() >= end_offset:
+                        break
+                    raw_line = f.readline()
+                    if not raw_line:
+                        break
+                    if end_offset is not None and f.tell() > end_offset:
+                        break
+                    yield raw_line.decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+
+def _read_transcript_text(transcript_source) -> list:
     """Legacy text-only transcript reader."""
     messages = []
     try:
-        with open(transcript_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    # Codex response_item format
-                    if entry.get("type") == "response_item":
-                        payload = entry.get("payload", {})
-                        if payload.get("type") == "message":
-                            role = payload.get("role", "")
-                            if role not in ("user", "assistant"):
-                                continue
-                            # Only include final_answer for assistant (not reasoning/intermediary)
-                            if role == "assistant" and payload.get("phase") != "final_answer":
-                                continue
-                            content_blocks = payload.get("content", [])
-                            text_parts = []
-                            for block in content_blocks:
-                                if isinstance(block, dict) and block.get("type") in ("input_text", "output_text"):
-                                    t = block.get("text", "").strip()
-                                    if t:
-                                        text_parts.append(t)
-                            text = "\n".join(text_parts).strip()
-                            if role == "user" and is_synthetic_codex_user_message(text):
-                                continue
-                            if text:
-                                messages.append({"role": role, "content": text})
-                    # Flat format (testing / future compatibility)
-                    elif "role" in entry and "content" in entry:
-                        messages.append({"role": entry["role"], "content": entry["content"]})
-                except json.JSONDecodeError:
-                    continue
+        for line in _iter_transcript_lines(transcript_source):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                # Codex response_item format
+                if entry.get("type") == "response_item":
+                    payload = entry.get("payload", {})
+                    if payload.get("type") == "message":
+                        role = payload.get("role", "")
+                        if role not in ("user", "assistant"):
+                            continue
+                        # Only include final_answer for assistant (not reasoning/intermediary)
+                        if role == "assistant" and payload.get("phase") != "final_answer":
+                            continue
+                        text = _extract_text_from_content_blocks(payload.get("content", []))
+                        if role == "user" and is_synthetic_codex_user_message(text):
+                            continue
+                        if text:
+                            messages.append({"role": role, "content": text})
+                    elif payload.get("type") == "agent_message":
+                        text = _extract_text_from_content_blocks(payload.get("content", []))
+                        if text:
+                            messages.append({
+                                "role": "assistant",
+                                "content": _format_agent_message(payload, text),
+                            })
+                # Flat format (testing / future compatibility)
+                elif "role" in entry and "content" in entry:
+                    messages.append({"role": entry["role"], "content": entry["content"]})
+            except json.JSONDecodeError:
+                continue
     except OSError:
         pass
     return messages
 
 
-def _read_transcript_rich(transcript_path: str) -> list:
+def _read_transcript_rich(transcript_source) -> list:
     """Rich transcript reader that preserves tool calls as structured content blocks.
 
     Collects all response_items and event_msgs into a sequence of messages
@@ -169,16 +301,16 @@ def _read_transcript_rich(transcript_path: str) -> list:
             assistant_blocks = []
 
     try:
-        with open(transcript_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+        for line in _iter_transcript_lines(transcript_source):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
 
+            else:
                 # Flat format (testing / future compatibility)
                 if "role" in entry and "content" in entry:
                     content = entry["content"]
@@ -219,6 +351,18 @@ def _read_transcript_rich(transcript_path: str) -> list:
                             text = _extract_text_from_content_blocks(payload.get("content", []))
                             if text:
                                 assistant_blocks.append({"type": "text", "text": text})
+
+                    elif ptype == "agent_message":
+                        _flush_assistant()
+                        text = _extract_text_from_content_blocks(payload.get("content", []))
+                        if text:
+                            messages.append({
+                                "role": "assistant",
+                                "content": [{
+                                    "type": "text",
+                                    "text": _format_agent_message(payload, text),
+                                }],
+                            })
 
                     elif ptype == "local_shell_call":
                         action = payload.get("action", {})
@@ -364,6 +508,14 @@ def _extract_text_from_content_blocks(content_blocks: list) -> str:
             if t:
                 text_parts.append(t)
     return "\n".join(text_parts).strip()
+
+
+def _format_agent_message(payload: dict, text: str) -> str:
+    """Preserve subagent provenance while treating its reply as assistant text."""
+    author = str(payload.get("author", "subagent"))
+    recipient = str(payload.get("recipient", ""))
+    route = f"{author} -> {recipient}" if recipient else author
+    return f"[subagent {route}]\n{text}".strip()
 
 
 def _extract_function_output_text(output) -> str:

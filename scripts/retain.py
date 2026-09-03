@@ -30,6 +30,7 @@ from lib.config import debug_log, load_config
 from lib.content import (
     prepare_retention_transcript,
     read_transcript,
+    resolve_transcript_segments,
     slice_last_turns_by_user_boundary,
 )
 from lib.daemon import get_api_url
@@ -57,6 +58,8 @@ def main():
 
     # Read full transcript
     include_tool_calls = config.get("retainToolCalls", True)
+    segments = resolve_transcript_segments(transcript_path)
+    debug_log(config, f"Resolved transcript chain: {len(segments)} segment(s)")
     all_messages = read_transcript(transcript_path, include_tool_calls=include_tool_calls)
     if not all_messages:
         debug_log(config, "No messages in transcript, skipping retain")
@@ -122,7 +125,9 @@ def main():
     bank_id = derive_bank_id(hook_input, config)
     ensure_bank_mission(client, bank_id, config, debug_fn=_dbg)
 
-    # Document ID: use session_id so the same session always upserts.
+    # Document ID: use session_id so the same logical session stays in one
+    # Hindsight document.  Full-session mode reconstructs the logical history,
+    # so an explicit replace is deterministic and avoids duplicate appends.
     # In chunked mode, append timestamp to create distinct documents per chunk.
     if retain_mode == "chunked" and retain_every_n > 1:
         document_id = f"{session_id}-{int(time.time() * 1000)}"
@@ -152,8 +157,44 @@ def main():
     for k, v in config.get("retainMetadata", {}).items():
         metadata[k] = _resolve_template(str(v))
 
+    content_to_retain = transcript
+    update_mode = "replace"
+
+    # Preserve the historical append behavior without duplicating the full
+    # transcript on every Stop hook.  The reconstructed transcript is the
+    # source of truth; append only its unseen suffix when the existing Hindsight
+    # document is an exact prefix.  A missing or inconsistent document gets a
+    # deterministic full replacement as recovery.
+    if retain_mode == "full-session":
+        try:
+            existing = client.get_document(bank_id, document_id, timeout=10)
+        except RuntimeError as exc:
+            if "HTTP 404" in str(exc):
+                existing = None
+            else:
+                debug_log(config, f"Could not inspect existing document; skipping retain: {exc}")
+                return
+
+        existing_text = str((existing or {}).get("original_text", ""))
+        if existing_text and transcript.startswith(existing_text):
+            content_to_retain = transcript[len(existing_text):]
+            if not content_to_retain:
+                debug_log(config, "Transcript unchanged; skipping retain")
+                return
+            update_mode = "append"
+            debug_log(
+                config,
+                f"Appending transcript suffix: {len(content_to_retain)} chars after {len(existing_text)} existing chars",
+            )
+        elif existing_text:
+            debug_log(
+                config,
+                f"Existing document is not a transcript prefix ({len(existing_text)} chars); replacing with full snapshot",
+            )
+
     debug_log(
-        config, f"Retaining to bank '{bank_id}', doc '{document_id}', {message_count} messages, {len(transcript)} chars"
+        config,
+        f"Retaining to bank '{bank_id}', doc '{document_id}', {message_count} messages, {len(content_to_retain)} chars, mode {update_mode}",
     )
     if tags:
         debug_log(config, f"Tags: {tags}")
@@ -162,11 +203,12 @@ def main():
     try:
         response = client.retain(
             bank_id=bank_id,
-            content=transcript,
+            content=content_to_retain,
             document_id=document_id,
             context=config.get("retainContext", "codex"),
             metadata=metadata,
             tags=tags,
+            update_mode=update_mode,
             timeout=15,
         )
         debug_log(config, f"Retain response: {json.dumps(response)[:200]}")

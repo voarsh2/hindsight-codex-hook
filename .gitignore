@@ -1,3 +1,15 @@
 .context-engine
 *.pyc
 .env
+
+# Local runtime state and generated reflection output
+/state/
+/reflections/
+settings.json
+# Python bytecode and caches, at any directory depth
+__pycache__/
+*.pyo
+*.pyd
+
+# Per-machine context-engine configuration
+/ctx_config.json
