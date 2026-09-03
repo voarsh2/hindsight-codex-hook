@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Optional
 
 DEFAULT_TIMEOUT = 15  # seconds
+HEALTH_CHECK_RETRIES = 3
+HEALTH_CHECK_DELAY = 2  # seconds
 
 
 def _plugin_version() -> str:
@@ -70,6 +72,26 @@ class HindsightClient:
                 pass
             raise RuntimeError(f"HTTP {e.code} from {url}: {body_text}") from e
 
+    def health_check(self, timeout: int = 5) -> bool:
+        """Check if the Hindsight server is reachable.
+
+        Mirrors Openclaw's checkExternalApiHealth: retries up to 3 times
+        with 2s delay between attempts.
+        """
+        import time
+
+        for attempt in range(1, HEALTH_CHECK_RETRIES + 1):
+            try:
+                url = f"{self.api_url}/health"
+                req = urllib.request.Request(url, headers=self._headers(), method="GET")
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        return True
+            except Exception:
+                pass
+            if attempt < HEALTH_CHECK_RETRIES:
+                time.sleep(HEALTH_CHECK_DELAY)
+        return False
 
     def recall(
         self,
@@ -93,6 +115,20 @@ class HindsightClient:
             body["budget"] = budget
         if types:
             body["types"] = types
+        return self._request("POST", path, body, timeout=timeout)
+
+    def reflect(
+        self, bank_id: str, query: str, budget: str = "low",
+        context: Optional[str] = None, max_tokens: Optional[int] = None,
+        timeout: int = 90,
+    ) -> dict:
+        """Generate an LLM-backed reflection over bank memories."""
+        path = f"/v1/default/banks/{urllib.parse.quote(bank_id, safe='')}/reflect"
+        body = {"query": query, "budget": budget}
+        if context:
+            body["context"] = context
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
         return self._request("POST", path, body, timeout=timeout)
 
     def retain(

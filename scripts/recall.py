@@ -17,7 +17,6 @@ Exit codes:
   0 — always (graceful degradation on any error)
 """
 
-import io
 import json
 import os
 import sys
@@ -41,43 +40,7 @@ from lib.state import write_state
 LAST_RECALL_STATE = "last_recall.json"
 
 
-def filter_by_min_scores(results: list[dict], min_scores: dict, config: dict) -> list[dict]:
-    """Drop recall results whose numeric scores are below configured floors."""
-    if not min_scores:
-        return results
-
-    floors = {}
-    for field, floor in min_scores.items():
-        try:
-            floors[field] = float(floor)
-        except (TypeError, ValueError):
-            debug_log(config, f"Ignoring invalid recallMinScores floor for '{field}': {floor!r}")
-    if not floors:
-        return results
-
-    def passes_floors(result: dict) -> bool:
-        scores = result.get("scores") or {}
-        for field, floor in floors.items():
-            value = scores.get(field)
-            # Missing/None scores pass (fail-open): BM25-only hits lack semantic
-            # scores, and passthrough rerankers report null.
-            if isinstance(value, (int, float)) and value < floor:
-                return False
-        return True
-
-    before_count = len(results)
-    filtered = [result for result in results if passes_floors(result)]
-    dropped_count = before_count - len(filtered)
-    debug_log(config, f"Score floors dropped {dropped_count}/{before_count} results")
-    return filtered
-
-
 def main():
-    if sys.platform == "win32":
-        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8', errors='replace')
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-
     config = load_config()
 
     if not config.get("autoRecall"):
@@ -135,13 +98,10 @@ def main():
     if len(query) > recall_max_query_chars:
         query = query[:recall_max_query_chars]
 
-    query = query.encode('utf-8', errors='ignore').decode('utf-8')
-
     current_time = format_current_time()
     preamble = config.get("recallPromptPreamble", "")
-    recall_timeout = config.get("recallTimeout", 10)
 
-    debug_log(config, f"Recalling from bank '{bank_id}', query length: {len(query)}, timeout: {recall_timeout}")
+    debug_log(config, f"Recalling from bank '{bank_id}', query length: {len(query)}")
     try:
         response = client.recall(
             bank_id=bank_id,
@@ -149,15 +109,13 @@ def main():
             max_tokens=config.get("recallMaxTokens", 1024),
             budget=config.get("recallBudget", "mid"),
             types=config.get("recallTypes"),
-            timeout=recall_timeout,
+            timeout=config.get("recallTimeout", 10),
         )
     except Exception as e:
         print(f"[Hindsight] Recall failed: {e}", file=sys.stderr)
         return
 
     results = response.get("results", [])
-    results = filter_by_min_scores(results, config.get("recallMinScores") or {}, config)
-
     if not results:
         debug_log(config, "No memories found")
         return

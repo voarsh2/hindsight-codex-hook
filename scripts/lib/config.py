@@ -18,7 +18,6 @@ DEFAULTS = {
     "recallContextTurns": 1,
     "recallMaxQueryChars": 800,
     "recallRoles": ["user", "assistant"],
-    "recallMinScores": {},
     "recallPromptPreamble": (
         "Relevant memories from past conversations (prioritize recent when "
         "conflicting). Only use memories that are directly useful to continue "
@@ -33,8 +32,13 @@ DEFAULTS = {
     "retainContext": "codex",
     "retainTags": [],
     "retainMetadata": {},
+    "autoReflect": False,
+    "reflectEveryNTurns": 10,
+    "reflectBudget": "low",
+    "reflectMaxTokens": 1024,
+    "reflectTimeout": 90,
+    "reflectQuery": "What durable facts, decisions, preferences, unresolved issues, or lessons emerged recently in this project? Focus only on the scoped project and distinguish confirmed facts from tentative ideas.",
     # Connection
-    "upgradeNotice": True,  # show the superseded-by-coding-agents notice (capped, see lib/upgrade_notice.py)
     "hindsightApiUrl": None,
     "hindsightApiToken": None,
     "apiPort": 9077,
@@ -65,12 +69,17 @@ ENV_OVERRIDES = {
     "HINDSIGHT_AGENT_NAME": ("agentName", str),
     "HINDSIGHT_AUTO_RECALL": ("autoRecall", bool),
     "HINDSIGHT_AUTO_RETAIN": ("autoRetain", bool),
+    "HINDSIGHT_AUTO_REFLECT": ("autoReflect", bool),
     "HINDSIGHT_RETAIN_MODE": ("retainMode", str),
     "HINDSIGHT_RECALL_BUDGET": ("recallBudget", str),
     "HINDSIGHT_RECALL_MAX_TOKENS": ("recallMaxTokens", int),
     "HINDSIGHT_RECALL_TIMEOUT": ("recallTimeout", int),
     "HINDSIGHT_RECALL_MAX_QUERY_CHARS": ("recallMaxQueryChars", int),
     "HINDSIGHT_RECALL_CONTEXT_TURNS": ("recallContextTurns", int),
+    "HINDSIGHT_REFLECT_EVERY_N_TURNS": ("reflectEveryNTurns", int),
+    "HINDSIGHT_REFLECT_BUDGET": ("reflectBudget", str),
+    "HINDSIGHT_REFLECT_MAX_TOKENS": ("reflectMaxTokens", int),
+    "HINDSIGHT_REFLECT_TIMEOUT": ("reflectTimeout", int),
     "HINDSIGHT_API_PORT": ("apiPort", int),
     "HINDSIGHT_DAEMON_IDLE_TIMEOUT": ("daemonIdleTimeout", int),
     "HINDSIGHT_EMBED_VERSION": ("embedVersion", str),

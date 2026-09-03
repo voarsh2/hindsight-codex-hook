@@ -17,7 +17,7 @@ import urllib.request
 
 from .client import USER_AGENT
 from .llm import detect_llm_config, get_llm_env_vars
-from .state import write_state
+from .state import read_state, write_state
 
 DAEMON_STATE_FILE = "daemon.json"
 PROFILE_NAME = "codex"
@@ -59,17 +59,8 @@ def _is_embed_available(config: dict) -> bool:
     return shutil.which("uvx") is not None or shutil.which("hindsight-embed") is not None
 
 
-def _check_health(base_url: str, timeout: int = 10) -> bool:
-    """Quick health check against a Hindsight server.
-
-    Default timeout is 10s (matching the recall hook budget): under load an
-    alive-but-busy daemon mid fact-extraction may not answer /health within a
-    couple of seconds. A too-short timeout yields a false negative, so
-    get_api_url() falls through to _ensure_daemon_running() ->
-    `hindsight-embed daemon start`, whose _clear_port() then SIGTERMs the
-    live daemon -- a restart/kill loop. A 10s budget lets a busy daemon
-    respond before it is declared dead.
-    """
+def _check_health(base_url: str, timeout: int = 2) -> bool:
+    """Quick health check against a Hindsight server."""
     try:
         url = f"{base_url.rstrip('/')}/health"
         req = urllib.request.Request(url, method="GET", headers={"User-Agent": USER_AGENT})
@@ -253,7 +244,6 @@ def prestart_daemon_background(config: dict, debug_fn=None):
         return
 
     llm_env = get_llm_env_vars(llm_config)
-    embed_cmd = _get_embed_command(config)
     daemon_env = dict(os.environ)
     daemon_env.update(llm_env)
     idle_timeout = config.get("daemonIdleTimeout", 300)
@@ -262,18 +252,18 @@ def prestart_daemon_background(config: dict, debug_fn=None):
         daemon_env["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1"
         daemon_env["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1"
 
+    embed_cmd = _get_embed_command(config)
+
     profile_args = ["profile", "create", PROFILE_NAME, "--merge", "--port", str(port)]
     for env_name, env_val in llm_env.items():
         if env_val:
             profile_args.extend(["--env", f"{env_name}={env_val}"])
 
     import shlex
-
     profile_str = shlex.join(embed_cmd + profile_args)
     daemon_str = shlex.join(embed_cmd + ["daemon", "--profile", PROFILE_NAME, "start"])
 
     import subprocess as _sp
-
     _sp.Popen(
         f"{profile_str} && {daemon_str}",
         shell=True,
