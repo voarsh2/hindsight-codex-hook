@@ -139,6 +139,7 @@ class HindsightClient:
         context: Optional[str] = None,
         metadata: Optional[dict] = None,
         tags: Optional[list] = None,
+        strategy: Optional[str] = None,
         update_mode: Optional[str] = None,
         timeout: int = 15,
     ) -> dict:
@@ -158,6 +159,8 @@ class HindsightClient:
             item["context"] = context
         if tags:
             item["tags"] = tags
+        if strategy:
+            item["strategy"] = strategy
         if update_mode:
             item["update_mode"] = update_mode
         body = {

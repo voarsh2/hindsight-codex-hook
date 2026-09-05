@@ -196,6 +196,9 @@ def main():
         config,
         f"Retaining to bank '{bank_id}', doc '{document_id}', {message_count} messages, {len(content_to_retain)} chars, mode {update_mode}",
     )
+    strategy = config.get("retainStrategy")
+    if strategy:
+        debug_log(config, f"Using retain strategy '{strategy}'")
     if tags:
         debug_log(config, f"Tags: {tags}")
 
@@ -208,6 +211,7 @@ def main():
             context=config.get("retainContext", "codex"),
             metadata=metadata,
             tags=tags,
+            strategy=strategy,
             update_mode=update_mode,
             timeout=15,
         )

@@ -300,6 +300,28 @@ class TestRetainHook:
         if "body" in captured:
             assert captured["body"]["items"][0]["context"] == "codex"
 
+    def test_retain_includes_configured_strategy(self, monkeypatch, tmp_path):
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        hook_input = make_hook_input(transcript_path=transcript)
+        _run_hook(
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+            user_config={"retainStrategy": "codex-hook"},
+        )
+
+        assert captured["body"]["items"][0]["strategy"] == "codex-hook"
+
     def test_retain_skips_below_every_n_turns_threshold(self, monkeypatch, tmp_path):
         messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
         transcript = make_transcript_file(tmp_path, messages)
