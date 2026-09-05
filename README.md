@@ -84,6 +84,7 @@ export ANTHROPIC_API_KEY=your-key
 | `autoRetain` | `true` | Store conversations after each turn |
 | `retainMode` | `"full-session"` | `"full-session"` or `"chunked"` |
 | `retainEveryNTurns` | `10` | Retain every N turns (1 = every turn) |
+| `retainStrategy` | `null` | Named Hindsight retain strategy sent per item; unset uses the bank default |
 | `recallBudget` | `"mid"` | Recall depth: `"low"`, `"mid"`, `"high"` |
 | `recallMaxTokens` | `1024` | Max tokens for injected memories |
 | `recallMinScores` | `{}` | Optional score floors applied after recall, keyed by score field (for example `{"semantic": 0.65, "reranker": 0.2}`). Missing or `null` scores pass so BM25-only and passthrough-reranker hits are not accidentally suppressed. When a cross-encoder reranker is active, the `reranker` floor is the main precision gate; treat reranker scores as query-local and not calibrated across queries. |
@@ -101,6 +102,7 @@ export HINDSIGHT_API_URL=https://api.hindsight.vectorize.io
 export HINDSIGHT_API_TOKEN=your-api-key
 export HINDSIGHT_BANK_ID=my-project
 export HINDSIGHT_RECALL_TIMEOUT=30
+export HINDSIGHT_RETAIN_STRATEGY=codex-hook
 export HINDSIGHT_DEBUG=true
 ```
 
