@@ -29,6 +29,15 @@ from pathlib import Path
 # Maximum length for tool output content in JSON format.
 _MAX_TOOL_OUTPUT_CHARS = 2000
 
+# The legacy retention format is deliberately simple text with explicit role
+# delimiters.  Keep this separate from the Codex JSONL parser: this regex is
+# used when auditing an already-retained Hindsight document before deciding
+# whether it is safe to append to that document.
+_RETAINED_ROLE_RE = re.compile(
+    r"(?s)\[role: (?P<role>user|assistant)\]\r?\n"
+    r"(?P<body>.*?)\r?\n\[(?P=role):end\]"
+)
+
 
 # ---------------------------------------------------------------------------
 # Memory tag stripping (anti-feedback-loop)
@@ -93,6 +102,52 @@ def is_synthetic_codex_user_message(content: str) -> bool:
     ):
         return True
 
+    return False
+
+
+def has_synthetic_codex_user_blocks(transcript: str) -> bool:
+    """Return whether a retained transcript contains Codex setup messages.
+
+    This audits the *already formatted* Hindsight source, rather than fresh
+    Codex JSONL.  It protects the append optimization from treating a legacy
+    document with bootstrap cruft as a trusted prefix of a newer transcript.
+    """
+    if not isinstance(transcript, str) or not transcript.strip():
+        return False
+
+    retained_blocks = list(_RETAINED_ROLE_RE.finditer(transcript))
+    if retained_blocks:
+        return any(
+            match.group("role") == "user"
+            and is_synthetic_codex_user_message(match.group("body"))
+            for match in retained_blocks
+        )
+
+    # Rich retention stores a JSON array of role/content messages.  Support
+    # that form too, so the guard remains valid if retainToolCalls is enabled.
+    try:
+        messages = json.loads(transcript)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(messages, list):
+        return False
+
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content", "")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(
+                str(block.get("text", ""))
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        else:
+            text = ""
+        if is_synthetic_codex_user_message(text):
+            return True
     return False
 
 

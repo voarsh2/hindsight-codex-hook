@@ -29,6 +29,7 @@ from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.content import (
     prepare_retention_transcript,
+    has_synthetic_codex_user_blocks,
     read_transcript,
     resolve_transcript_segments,
     slice_last_turns_by_user_boundary,
@@ -176,7 +177,18 @@ def main():
                 return
 
         existing_text = str((existing or {}).get("original_text", ""))
-        if existing_text and transcript.startswith(existing_text):
+        existing_is_dirty = has_synthetic_codex_user_blocks(existing_text)
+        if existing_text and existing_is_dirty:
+            # An old document may be a literal prefix of the current session
+            # while still containing bootstrap cruft.  Never append after that
+            # prefix: replace it with the freshly reconstructed, filtered
+            # transcript so the dirty history is actually removed.
+            debug_log(
+                config,
+                f"Existing document contains synthetic Codex setup "
+                f"({len(existing_text)} chars); replacing with full cleaned snapshot",
+            )
+        elif existing_text and transcript.startswith(existing_text):
             content_to_retain = transcript[len(existing_text):]
             if not content_to_retain:
                 debug_log(config, "Transcript unchanged; skipping retain")

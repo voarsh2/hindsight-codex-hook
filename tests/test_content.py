@@ -9,6 +9,7 @@ import pytest
 from lib.content import (
     compose_recall_query,
     format_memories,
+    has_synthetic_codex_user_blocks,
     is_synthetic_codex_user_message,
     prepare_retention_transcript,
     read_transcript,
@@ -84,6 +85,37 @@ class TestSyntheticCodexUserMessage:
     def test_does_not_match_user_text_following_environment_context(self):
         raw = "<environment_context>\n<cwd>/tmp</cwd>\n</environment_context>\nPlease retain this question."
         assert not is_synthetic_codex_user_message(raw)
+
+
+class TestSyntheticCodexRetainedBlocks:
+    def test_detects_noisy_legacy_retained_prefix(self):
+        retained = (
+            "[role: user]\n"
+            "<environment_context>\n<cwd>/tmp/project</cwd>\n"
+            "</environment_context>\n"
+            "[user:end]\n\n"
+            "[role: user]\nactual request\n[user:end]"
+        )
+        assert has_synthetic_codex_user_blocks(retained)
+
+    def test_detects_noisy_rich_retained_transcript(self):
+        retained = json.dumps([
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "<environment_context>\n<cwd>/tmp</cwd>\n"
+                        "</environment_context>",
+                    }
+                ],
+            }
+        ])
+        assert has_synthetic_codex_user_blocks(retained)
+
+    def test_does_not_flag_clean_retained_transcript(self):
+        retained = "[role: user]\nactual request\n[user:end]"
+        assert not has_synthetic_codex_user_blocks(retained)
 
 
 # ---------------------------------------------------------------------------

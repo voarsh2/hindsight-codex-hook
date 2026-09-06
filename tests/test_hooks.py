@@ -28,6 +28,9 @@ def _run_hook(module_name, hook_input, monkeypatch, tmp_path, urlopen_side_effec
     """Import and run a hook script's main() with mocked stdin/stdout/HTTP."""
     # Isolate HOME so ~/.hindsight/codex.json and state land in tmp_path
     monkeypatch.setenv("HOME", str(tmp_path))
+    # On Windows, pathlib/os.path.expanduser() uses USERPROFILE rather than
+    # HOME.  Keep the test's config and state isolation effective there too.
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     # Strip real HINDSIGHT_* env vars
     for k in list(os.environ):
@@ -218,6 +221,35 @@ class TestRecallHook:
 
 
 class TestRetainHook:
+    def test_replaces_noisy_existing_prefix_instead_of_appending(self, monkeypatch, tmp_path):
+        noisy_setup = (
+            "<environment_context>\n<cwd>/old/project</cwd>\n"
+            "</environment_context>"
+        )
+        messages = [
+            {"role": "user", "content": noisy_setup},
+            {"role": "assistant", "content": "new answer"},
+        ]
+        transcript = make_transcript_file(tmp_path, messages)
+        existing = (
+            "[role: user]\n"
+            f"{noisy_setup}\n"
+            "[user:end]"
+        )
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/documents/" in req.full_url:
+                return FakeHTTPResponse({"original_text": existing})
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        hook_input = make_hook_input(transcript_path=transcript)
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
+
+        assert captured["body"]["items"][0]["update_mode"] == "replace"
+
     def test_posts_transcript_to_hindsight(self, monkeypatch, tmp_path):
         messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
         transcript = make_transcript_file(tmp_path, messages)
