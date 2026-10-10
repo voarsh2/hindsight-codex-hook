@@ -125,6 +125,12 @@ To keep separate memory per project:
 
 This creates banks like `codex::my-project` automatically, using the working directory name.
 
+## Claude Code hooks
+
+The legacy Claude Code integration is bundled in [`claude-code/`](./claude-code/README.md). The project hooks in `.claude/settings.json` run its SessionStart, UserPromptSubmit, Stop, and SessionEnd scripts whenever Claude Code opens this repository. They use the `python` executable on `PATH` and do not change the Codex hooks.
+
+The Claude hooks read personal settings from `~/.hindsight/claude-code.json`. Set `hindsightApiUrl` and, if needed, `hindsightApiToken` there for a remote server; an empty URL uses the local daemon. They use the `default` bank. Open a new Claude Code session in this repository and accept the project hook settings when prompted; use `/hooks` to inspect the registered hooks.
+
 ## Troubleshooting
 
 **Memory not appearing**: Enable debug mode (`"debug": true`) and check stderr output.

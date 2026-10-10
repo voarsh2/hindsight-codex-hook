@@ -6,6 +6,9 @@
 /state/
 /reflections/
 settings.json
+# Keep the bundled Claude defaults and project hook registration in Git.
+!/claude-code/settings.json
+!/.claude/settings.json
 # Python bytecode and caches, at any directory depth
 __pycache__/
 *.pyo
