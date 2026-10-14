@@ -1,5 +1,5 @@
 {
-  "version": "0.2.1",
+  "version": "0.3.0",
   "hindsightApiUrl": "",
   "bankId": "codex",
   "bankMission": "You are a Codex AI coding assistant. Focus on technical decisions, code changes, debugging sessions, and project context relevant to the user's work.",
@@ -9,6 +9,7 @@
   "retainMode": "full-session",
   "recallBudget": "mid",
   "recallMaxTokens": 1024,
+  "recallMinScores": {},
   "recallTypes": ["world", "experience"],
   "recallContextTurns": 1,
   "recallMaxQueryChars": 800,
