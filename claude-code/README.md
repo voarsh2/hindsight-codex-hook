@@ -243,8 +243,8 @@ Auto-retain runs after Claude responds. It extracts the conversation transcript 
 | Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
 | `autoRetain` | `HINDSIGHT_AUTO_RETAIN` | `true` | Master switch for auto-retain. Set to `false` to disable memory storage entirely. |
-| `retainMode` | `HINDSIGHT_RETAIN_MODE` | `"full-session"` | Retention strategy. `"full-session"` sends the initial transcript once, then only new messages in chunk documents; compaction starts a fresh chunk. |
-| `retainEveryNTurns` | — | `10` | How often to retain. `1` = every turn; `10` = every 10th turn. Higher values reduce API calls but delay memory capture. Values > 1 enable **chunked retention** with a sliding window. |
+| `retainMode` | `HINDSIGHT_RETAIN_MODE` | `"full-session"` | Retention strategy. Full-session keeps one document per session and appends only the unseen transcript suffix; if the transcript no longer matches the stored prefix, it replaces the document with a fresh snapshot. Chunked mode creates separate sliding-window documents. |
+| `retainEveryNTurns` | — | `10` | How often to retain. `1` = every turn; `10` = every 10th turn. Higher values reduce API calls but delay memory capture. In chunked mode, this also sets the sliding window size. |
 | `retainOverlapTurns` | — | `2` | When chunked retention fires, this many extra turns from the previous chunk are included for continuity. Total window size = `retainEveryNTurns + retainOverlapTurns`. |
 | `retainRoles` | — | `["user", "assistant"]` | Which message roles to include in the retained transcript. |
 | `retainToolCalls` | — | `true` | Whether to include tool calls (function invocations and results) in the retained transcript. Captures structured actions like file reads, searches, and code edits. |

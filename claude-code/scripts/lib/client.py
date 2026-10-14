@@ -124,6 +124,7 @@ class HindsightClient:
         metadata: Optional[dict] = None,
         tags: Optional[list] = None,
         timeout: int = 15,
+        update_mode: Optional[str] = None,
     ) -> dict:
         """Retain content into a bank's memory.
 
@@ -141,11 +142,21 @@ class HindsightClient:
             item["context"] = context
         if tags:
             item["tags"] = tags
+        if update_mode:
+            item["update_mode"] = update_mode
         body = {
             "items": [item],
             "async": True,
         }
         return self.request("POST", path, body, timeout=timeout)
+
+    def get_document(self, bank_id: str, document_id: str, timeout: int = 10) -> dict:
+        """Get an existing document, including its original retained text."""
+        path = (
+            f"/v1/default/banks/{urllib.parse.quote(bank_id, safe='')}"
+            f"/documents/{urllib.parse.quote(document_id, safe='')}"
+        )
+        return self.request("GET", path, timeout=timeout)
 
     def set_bank_mission(
         self, bank_id: str, mission: str, retain_mission: Optional[str] = None, timeout: int = 15

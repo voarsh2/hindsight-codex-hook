@@ -15,6 +15,14 @@ from datetime import datetime, timezone
 # Memory tag stripping (anti-feedback-loop)
 # ---------------------------------------------------------------------------
 
+_TRANSCRIPT_NOISE_RE = re.compile(
+    r"<(hook_prompt|task-notification|system-reminder|hindsight_memory|hindsight_memories|"
+    r"hindsight_bank|relevant_memories|user_feedback|hindsight_knowledge|hindsight_knowledge_refresh|"
+    r"local-command-caveat|local-command-stdout|local-command-stderr|command-name|command-message|"
+    r"command-args)\b[^>]*>[\s\S]*?</\1\s*>",
+    re.IGNORECASE,
+)
+
 
 def strip_channel_envelope(content: str) -> str:
     """Strip Claude Code channel XML wrappers from user messages.
@@ -36,16 +44,12 @@ def strip_channel_envelope(content: str) -> str:
 
 
 def strip_memory_tags(content: str) -> str:
-    """Remove <hindsight_memories> and <relevant_memories> blocks.
+    """Remove injected context and harness-control blocks from transcript text.
 
-    Prevents retain feedback loop — these were injected during recall and
-    should not be re-stored.
-
-    Port of: stripMemoryTags() in index.js
+    This prevents feedback loops and drops Claude's local-command and task
+    notification records while preserving any surrounding conversational text.
     """
-    content = re.sub(r"<hindsight_memories>[\s\S]*?</hindsight_memories>", "", content)
-    content = re.sub(r"<relevant_memories>[\s\S]*?</relevant_memories>", "", content)
-    return content
+    return _TRANSCRIPT_NOISE_RE.sub("", content)
 
 
 # ---------------------------------------------------------------------------
@@ -317,8 +321,8 @@ def prepare_retention_transcript(
     Args:
         messages: List of message dicts with 'role' and 'content'.
         retain_roles: Roles to include (default: ['user', 'assistant']).
-        retain_full_window: If True, retain all messages (chunked mode).
-            If False, retain only the last turn (last user msg + responses).
+        retain_full_window: If True, retain all messages. If False, retain only
+            the last turn (last user msg + responses).
         include_tool_calls: If True, output JSON format with full tool call data.
 
     Returns:
