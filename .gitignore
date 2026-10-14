@@ -16,3 +16,5 @@ __pycache__/
 
 # Per-machine context-engine configuration
 /ctx_config.json
+
+.mcp.json
